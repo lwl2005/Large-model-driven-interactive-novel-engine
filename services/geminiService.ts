@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold, Modality } from "@google/genai";
 import { StoryGenre, Character, StorySegment, ImageSize, SupportingCharacter, StoryMood, generateUUID, WorldSettings, Skill, AvatarStyle, MemoryState, ImageModel, ShotSize, ScheduledEvent } from '../types';
 import { WULIN_CONTEXT, WESTERN_FANTASY_CONTEXT, NARRATIVE_STRUCTURES, NARRATIVE_TECHNIQUES } from '../constants';
 
@@ -558,4 +558,29 @@ export const validateModelScopeConnection = async (key: string): Promise<string>
     } catch (e) {
         return "连接失败（注意：CORS 可能阻止浏览器请求）";
     }
+};
+
+export const generateSpeech = async (
+    text: string, 
+    voiceName: string
+): Promise<string> => {
+    // Basic clean up of markdown/formatting for better speech
+    const cleanText = text.replace(/[*_~`#]/g, '');
+    
+    const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: { parts: [{ text: cleanText }] },
+        config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+                voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName }
+                }
+            }
+        }
+    });
+    
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Audio) throw new Error("TTS generation returned no audio data.");
+    return base64Audio;
 };

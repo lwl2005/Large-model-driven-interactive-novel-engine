@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { SmoothBackground, getSmartBackground, getRandomBackground } from '../SmoothBackground';
 import { TypingText } from '../TypingText';
@@ -62,6 +63,10 @@ interface GameScreenProps {
     // Favorite BG
     isCurrentBgFavorited: boolean;
     onToggleFavorite: () => void;
+    
+    // TTS
+    playStorySegmentTTS: (segment: any) => void;
+    isTTSPlaying: boolean;
 }
 
 // Entity Tooltip Overlay Component
@@ -507,7 +512,8 @@ export const GameScreen: React.FC<GameScreenProps> = (props) => {
         onOpenImageModal, onOpenCharacterModal, onOpenHistoryModal, onOpenSkillModal, onOpenRegenConfirm, onOpenSettings,
         shouldBlurBackground, playClickSound, handleSummarizeMemory, isSummarizing, handleRegenerate, handleSwitchVersion,
         handleGlobalReplace, visualEffect, setVisualEffect, autoSaveState, showStoryPanelBackground, storyFontSize, storyFontFamily,
-        isCurrentBgFavorited, onToggleFavorite
+        isCurrentBgFavorited, onToggleFavorite,
+        playStorySegmentTTS, isTTSPlaying
     } = props;
 
     const [viewingIndex, setViewingIndex] = useState(context.history.length - 1);
@@ -526,6 +532,11 @@ export const GameScreen: React.FC<GameScreenProps> = (props) => {
     
     // Entity Tooltip State
     const [tooltipData, setTooltipData] = useState<{ info: any, rect: DOMRect } | null>(null);
+    
+    // Dice Roll State
+    const [isRolling, setIsRolling] = useState(false);
+    const [rollResult, setRollResult] = useState<number | null>(null);
+    const [showDiceModal, setShowDiceModal] = useState(false);
     
     // God Mode inputs
     const [findText, setFindText] = useState('');
@@ -649,6 +660,46 @@ export const GameScreen: React.FC<GameScreenProps> = (props) => {
             onToggleFavorite();
         }
         setTimeout(() => setHeartBeat(false), 500);
+    };
+    
+    // Dice Roll Logic
+    const performDiceRoll = (max: number) => {
+        setIsRolling(true);
+        setRollResult(null);
+        playClickSound();
+        
+        // Simple animation simulation
+        let rollCount = 0;
+        const interval = setInterval(() => {
+            setRollResult(Math.floor(Math.random() * max) + 1);
+            rollCount++;
+            if (rollCount > 10) {
+                clearInterval(interval);
+                const finalResult = Math.floor(Math.random() * max) + 1;
+                setRollResult(finalResult);
+                setIsRolling(false);
+                
+                // Construct result text based on d20 logic or d100 logic
+                let outcome = "";
+                if (max === 20) {
+                    if (finalResult === 20) outcome = " (大成功!)";
+                    else if (finalResult === 1) outcome = " (大失败!)";
+                    else if (finalResult >= 15) outcome = " (成功)";
+                    else if (finalResult <= 5) outcome = " (失败)";
+                } else if (max === 100) {
+                    if (finalResult <= 5) outcome = " (大成功!)";
+                    else if (finalResult >= 95) outcome = " (大失败!)";
+                }
+                
+                setInputText(prev => {
+                    const prefix = prev ? prev + " " : "";
+                    return prefix + `【命运判定】 D${max}=${finalResult}${outcome}`;
+                });
+                
+                // Auto close after result shown
+                setTimeout(() => setShowDiceModal(false), 1500);
+            }
+        }, 80);
     };
 
     // Render Setup
@@ -874,21 +925,41 @@ export const GameScreen: React.FC<GameScreenProps> = (props) => {
                 <AutocompleteList suggestions={suggestions} onSelect={handleSuggestionSelect} />
                  <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); if (inputText.trim()) handleChoice(inputText, viewingIndex); } }} placeholder="按 Enter 换行，Shift + Enter 发送... (输入 /技能 #物品 @角色 可联想)" className={`w-full p-4 rounded-lg shadow-lg resize-none min-h-[80px] max-h-[120px] custom-scrollbar ${styles.input} ${styles.font}`} autoFocus />
             </div>
-            { (isLoading || (isLatest && !textTypingComplete)) ? (
-                <div className={`h-[80px] w-[80px] rounded-lg font-bold transition-all border flex items-center justify-center ${styles.container} opacity-100`}>
-                     <div className="flex flex-col items-center justify-center gap-2">
-                        <div className="flex gap-2">
-                            <div className={`w-1.5 h-1.5 rounded-full ${styles.accent.replace('text-', 'bg-').replace('400', '500')} animate-pulse`}></div>
-                            <div className={`w-1.5 h-1.5 rounded-full ${styles.accent.replace('text-', 'bg-').replace('400', '500')} animate-pulse delay-200`}></div>
+            
+            {/* Dice Roller Button */}
+            <div className="flex flex-col gap-2">
+                <div className="relative">
+                    <button 
+                        onClick={() => setShowDiceModal(!showDiceModal)}
+                        className={`w-[80px] h-[36px] rounded-lg border flex items-center justify-center bg-stone-900 border-stone-600 text-stone-300 hover:text-white hover:border-stone-400 transition-all text-xs font-bold gap-1`}
+                        title="命运罗盘 (投掷骰子)"
+                    >
+                        <span>🎲</span> 判定
+                    </button>
+                    {showDiceModal && (
+                        <div className="absolute bottom-full mb-2 right-0 bg-stone-800 border border-stone-600 p-2 rounded-lg shadow-xl flex gap-2 animate-fade-in-up z-50">
+                            <button onClick={() => performDiceRoll(20)} disabled={isRolling} className="px-3 py-1 bg-indigo-900/50 hover:bg-indigo-800 border border-indigo-500/30 rounded text-xs text-indigo-200 font-bold whitespace-nowrap">D20</button>
+                            <button onClick={() => performDiceRoll(100)} disabled={isRolling} className="px-3 py-1 bg-purple-900/50 hover:bg-purple-800 border border-purple-500/30 rounded text-xs text-purple-200 font-bold whitespace-nowrap">D100</button>
                         </div>
-                        <span className={`text-[9px] font-mono tracking-widest ${styles.accent}`}>思考中</span>
-                     </div>
+                    )}
                 </div>
-            ) : (
-                <button onClick={() => { if(inputText.trim()) { handleChoice(inputText, viewingIndex); } else { handleRegenerate(); } }} className={`h-[80px] w-[80px] rounded-lg font-bold transition-all border flex items-center justify-center ${styles.button} hover:scale-105 opacity-100 ${styles.container}`} title={inputText.trim() ? "发送" : "重新生成上一条"}>
-                     {inputText.trim() ? ( <span className="text-2xl">➤</span> ) : ( <span className="text-2xl">↻</span> )}
-                </button>
-            )}
+
+                { (isLoading || (isLatest && !textTypingComplete)) ? (
+                    <div className={`h-[80px] w-[80px] rounded-lg font-bold transition-all border flex items-center justify-center ${styles.container} opacity-100`}>
+                         <div className="flex flex-col items-center justify-center gap-2">
+                            <div className="flex gap-2">
+                                <div className={`w-1.5 h-1.5 rounded-full ${styles.accent.replace('text-', 'bg-').replace('400', '500')} animate-pulse`}></div>
+                                <div className={`w-1.5 h-1.5 rounded-full ${styles.accent.replace('text-', 'bg-').replace('400', '500')} animate-pulse delay-200`}></div>
+                            </div>
+                            <span className={`text-[9px] font-mono tracking-widest ${styles.accent}`}>思考中</span>
+                         </div>
+                    </div>
+                ) : (
+                    <button onClick={() => { if(inputText.trim()) { handleChoice(inputText, viewingIndex); } else { handleRegenerate(); } }} className={`h-[80px] w-[80px] rounded-lg font-bold transition-all border flex items-center justify-center ${styles.button} hover:scale-105 opacity-100 ${styles.container}`} title={inputText.trim() ? "发送" : "重新生成上一条"}>
+                         {inputText.trim() ? ( <span className="text-2xl">➤</span> ) : ( <span className="text-2xl">↻</span> )}
+                    </button>
+                )}
+            </div>
         </div>
     );
 
@@ -897,7 +968,7 @@ export const GameScreen: React.FC<GameScreenProps> = (props) => {
             <div className="flex items-center gap-2 bg-stone-900/90 backdrop-blur-md border border-white/5 rounded px-3 py-1.5 shadow-xl transform scale-90 hover:scale-95 transition-transform duration-300 group">
                 <div className="w-1.5 h-1.5 rounded-full bg-stone-700 flex items-center justify-center"><div className="w-1 h-[1px] bg-stone-900 transform rotate-45"></div></div>
                 <div className="flex gap-1 p-0.5 bg-black/50 rounded border border-white/5">
-                    <button onClick={() => { playClickSound(); setInputPage(0); }} className={`h-1.5 w-6 rounded-[1px] transition-all duration-300 ${inputPage === 0 ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.8)]' : 'bg-stone-800 hover:bg-stone-600'}`} title="模式 A" />
+                    <button onClick={() => { playClickSound(); setInputPage(0); }} className={`h-1.5 w-6 rounded-[1px] transition-all duration-300 ${inputPage === 0 ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,191,36,0.8)]' : 'bg-stone-800 hover:bg-stone-600'}`} title="模式 A" />
                     <button onClick={() => { playClickSound(); setInputPage(1); }} className={`h-1.5 w-6 rounded-[1px] transition-all duration-300 ${inputPage === 1 ? 'bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.8)]' : 'bg-stone-800 hover:bg-stone-600'}`} title="模式 B" />
                 </div>
                 <div className="w-1.5 h-1.5 rounded-full bg-stone-700 flex items-center justify-center"><div className="w-1 h-[1px] bg-stone-900 transform rotate-12"></div></div>
@@ -923,6 +994,16 @@ export const GameScreen: React.FC<GameScreenProps> = (props) => {
         
         {/* Entity Tooltip Rendered at Root Level */}
         {tooltipData && <EntityTooltipRenderer info={tooltipData.info} rect={tooltipData.rect} />}
+
+        {/* Rolling Overlay */}
+        {isRolling && (
+            <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in-up pointer-events-none">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="text-6xl animate-bounce">🎲</div>
+                    <div className="text-4xl font-mono font-bold text-white tracking-widest">{rollResult || "ROLLING..."}</div>
+                </div>
+            </div>
+        )}
 
         {/* Render Modals at Root Level */}
         {showAddEventModal && (
@@ -959,6 +1040,27 @@ export const GameScreen: React.FC<GameScreenProps> = (props) => {
              <div className="flex items-center gap-3 justify-end flex-wrap max-w-[50vw]">
                  <button onClick={() => { playClickSound(); onOpenSettings(); }} className="p-2 rounded-full bg-black/30 backdrop-blur text-white hover:bg-white/20 border border-white/10 transition-all hover:rotate-90 duration-500" title="系统设置"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.43.811 1.035.811 1.73 0 .695-.316 1.3-.811 1.73m0-3.46a24.42 24.42 0 010 3.46" /></svg></button>
                  
+                 {/* NEW: TTS Play Button */}
+                 <button 
+                    onClick={() => { playClickSound(); playStorySegmentTTS(segment); }} 
+                    disabled={isTTSPlaying}
+                    className={`p-2 rounded-full backdrop-blur border transition-all ${isTTSPlaying ? 'bg-indigo-500/80 border-indigo-400 text-white animate-pulse' : 'bg-black/30 hover:bg-white/20 border-white/10 text-white'}`} 
+                    title="朗读当前段落"
+                 >
+                    {isTTSPlaying ? (
+                        <div className="flex gap-0.5 h-5 items-end justify-center w-5">
+                            <div className="w-1 bg-white animate-[bounce_1s_infinite] h-2"></div>
+                            <div className="w-1 bg-white animate-[bounce_1.2s_infinite] h-4"></div>
+                            <div className="w-1 bg-white animate-[bounce_0.8s_infinite] h-3"></div>
+                        </div>
+                    ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                            <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 11-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" />
+                            <path d="M15.932 7.757a.75.75 0 011.061 0 6 6 0 010 8.486.75.75 0 01-1.06-1.061 4.5 4.5 0 000-6.364.75.75 0 010-1.06z" />
+                        </svg>
+                    )}
+                 </button>
+
                  {/* Heart / Favorite Button */}
                  <button 
                     onClick={triggerHeart} 

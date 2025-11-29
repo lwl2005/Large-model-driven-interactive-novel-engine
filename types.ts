@@ -61,6 +61,19 @@ export type ImageModel =
   | 'Qwen/Qwen-Image'
   | 'MusePublic/FLUX.1';
 
+export type GeminiVoiceName = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Zephyr';
+
+export interface TTSConfig {
+  enabled: boolean;
+  autoPlay: boolean;
+  enableProtagonist: boolean;
+  enableNPC: boolean;
+  enableNarration: boolean;
+  protagonistVoice: GeminiVoiceName;
+  npcVoice: GeminiVoiceName;
+  narratorVoice: GeminiVoiceName;
+}
+
 // New: Visual Effect Types
 export type VisualEffectType = 'none' | 'fire' | 'thunder' | 'heal' | 'darkness' | 'ice' | 'gold';
 

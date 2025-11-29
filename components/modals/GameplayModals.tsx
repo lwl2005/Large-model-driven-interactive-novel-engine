@@ -1,5 +1,4 @@
 
-
 import React, { useMemo } from 'react';
 import { GameContext, ImageSize, StoryMood, MOOD_LABELS, SupportingCharacter, Character } from '../../types';
 import { Button } from '../Button';
@@ -115,7 +114,7 @@ export const HistoryModal = ({ history, onClose, fontSize, fontFamily }: { histo
         return result;
     }, [history]);
 
-    const handleExport = () => {
+    const handleExportMarkdown = () => {
         const title = `主角光环 - 剧情回顾 (${new Date().toLocaleDateString()})`;
         const mdContent = `# ${title}\n\n` + history.map((h, i) => {
             const userPart = h.causedBy ? `> **我**: ${h.causedBy}\n\n` : '';
@@ -132,6 +131,33 @@ export const HistoryModal = ({ history, onClose, fontSize, fontFamily }: { histo
         document.body.removeChild(link);
     };
 
+    const handleExportNovel = () => {
+        const title = `主角光环 - 沉浸版 (${new Date().toLocaleDateString()})`;
+        let content = `${title}\n\n`;
+
+        chapters.forEach((chapter, index) => {
+            content += `\n\n-------------- 第${toChineseNum(index + 1)}卷 --------------\n\n`;
+            
+            chapter.segments.forEach(h => {
+                // Clean up text: remove potential markdown artifacts if any
+                const cleanText = h.text.replace(/\*\*/g, ''); 
+                // Add Chinese indentation (2 full-width spaces) to the start
+                // Note: user input (causedBy) is intentionally IGNORED
+                const indentedText = '\u3000\u3000' + cleanText.replace(/\n/g, '\n\u3000\u3000');
+                content += `${indentedText}\n\n`;
+            });
+        });
+
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `novel_export_${new Date().toISOString().slice(0,10)}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-6" onClick={onClose}>
             <div className="bg-stone-100 border border-stone-200 rounded-xl max-w-2xl w-full max-h-[95vh] h-auto flex flex-col shadow-2xl text-gray-800 animate-fade-in-up overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -142,15 +168,22 @@ export const HistoryModal = ({ history, onClose, fontSize, fontFamily }: { histo
                         </h3>
                         <span className="text-[10px] text-gray-400 font-mono mt-0.5">总字数: {totalWords} | 共 {chapters.length} 卷</span>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                          <button 
-                            onClick={handleExport} 
-                            className="text-xs bg-white hover:bg-stone-200 text-gray-600 hover:text-gray-900 px-3 py-1.5 rounded border border-stone-300 transition-colors flex items-center gap-1 shadow-sm"
-                            title="将所有剧情导出为Markdown文件"
+                            onClick={handleExportNovel} 
+                            className="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:text-indigo-900 px-3 py-1.5 rounded border border-indigo-200 transition-colors flex items-center gap-1 shadow-sm font-bold"
+                            title="自动删除玩家回复，仅保留正文并分卷导出"
                         >
-                            <span></span> 导出 Markdown
+                            <span>📖</span> 转为小说
                         </button>
-                        <button onClick={onClose} className="text-gray-400 hover:text-red-500 text-lg px-2 font-bold">✕</button>
+                         <button 
+                            onClick={handleExportMarkdown} 
+                            className="text-xs bg-white hover:bg-stone-200 text-gray-600 hover:text-gray-900 px-3 py-1.5 rounded border border-stone-300 transition-colors flex items-center gap-1 shadow-sm"
+                            title="将所有剧情(含选项)导出为Markdown文件"
+                        >
+                            <span>📋</span> 导出 MD
+                        </button>
+                        <button onClick={onClose} className="text-gray-400 hover:text-red-500 text-lg px-2 font-bold ml-2">✕</button>
                     </div>
                 </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-0 space-y-0 bg-stone-100 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">

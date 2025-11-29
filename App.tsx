@@ -142,6 +142,9 @@ const App: React.FC = () => {
                 
                 isCurrentBgFavorited={game.isCurrentBgFavorited}
                 onToggleFavorite={game.toggleCurrentBgFavorite}
+
+                playStorySegmentTTS={game.playStorySegmentTTS}
+                isTTSPlaying={game.isTTSPlaying}
             />
         )}
 
@@ -218,6 +221,9 @@ const App: React.FC = () => {
                 handleSetCustomBaseUrl={game.handleSetCustomBaseUrl}
                 customApiKey={game.customApiKey}
                 handleSetCustomApiKey={game.handleSetCustomApiKey}
+
+                ttsConfig={game.ttsConfig}
+                handleUpdateTTSConfig={game.handleUpdateTTSConfig}
             />
         )}
 

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { GalleryItem, ImageModel, AvatarStyle, BackgroundStyle, InputMode, PromptModule, generateUUID } from '../../types';
+import { GalleryItem, ImageModel, AvatarStyle, BackgroundStyle, InputMode, PromptModule, generateUUID, TTSConfig, GeminiVoiceName } from '../../types';
 
 interface GalleryModalProps {
     gallery: GalleryItem[];
@@ -122,6 +122,10 @@ interface SettingsModalProps {
     handleSetCustomBaseUrl: (url: string) => void;
     customApiKey: string;
     handleSetCustomApiKey: (key: string) => void;
+
+    // TTS
+    ttsConfig: TTSConfig;
+    handleUpdateTTSConfig: (config: Partial<TTSConfig>) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ 
@@ -145,7 +149,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     storyFontFamily, setStoryFontFamily,
     autoSaveGallery, setAutoSaveGallery,
     customBaseUrl, handleSetCustomBaseUrl,
-    customApiKey, handleSetCustomApiKey
+    customApiKey, handleSetCustomApiKey,
+    ttsConfig, handleUpdateTTSConfig
 }) => {
     const [activeTab, setActiveTab] = useState<'model' | 'prompt' | 'avatar' | 'display' | 'gameplay' | 'audio' | 'connection'>('model');
     
@@ -404,12 +409,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         handleAddPromptModule(newModule);
     };
 
+    const handleExportSettings = () => {
+        const settings = {
+            aiModel,
+            imageModel,
+            avatarStyle,
+            customAvatarStyle,
+            avatarRefImage,
+            backgroundStyle,
+            inputMode,
+            modelScopeApiKey,
+            isMuted,
+            volume,
+            customPrompt,
+            promptModules,
+            showStoryPanelBackground,
+            historyFontSize,
+            storyFontSize,
+            storyFontFamily,
+            autoSaveGallery,
+            customBaseUrl,
+            customApiKey,
+            ttsConfig,
+            exportedAt: new Date().toISOString(),
+            appVersion: "2.5"
+        };
+
+        const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `protagonist_halo_settings_${new Date().toISOString().slice(0,10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     const fontOptions = [
         { label: '现代黑体 (Noto Sans)', value: "'Noto Sans SC', sans-serif" },
         { label: '经典宋体 (Noto Serif)', value: "'Noto Serif SC', serif" },
         { label: '古风行楷 (Ma Shan Zheng)', value: "'Ma Shan Zheng', cursive" },
         { label: '系统楷体 (KaiTi)', value: "'KaiTi', 'STKaiti', serif" }
     ];
+
+    const VOICE_OPTIONS: GeminiVoiceName[] = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 font-mono">
@@ -1041,40 +1085,150 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 
                                 {activeTab === 'audio' && (
                                         <div className="space-y-8">
-                                            {/* Wrapped Audio Controls in Cards for consistency */}
-                                            <div className="group relative p-6 bg-white rounded border border-stone-200 flex items-center justify-between hover:border-gray-300 transition-colors">
-                                                <div className="flex flex-col">
-                                                    <span className="font-bold text-sm text-gray-700 mb-1 font-mono">全局静音</span>
-                                                    <span className="text-[10px] text-gray-400 font-mono">关闭所有背景音乐与音效</span>
+                                            {/* Global Audio Controls */}
+                                            <div>
+                                                <div className="text-xs text-indigo-600/70 uppercase tracking-widest mb-3 border-l-2 border-indigo-400 pl-2">全局音效</div>
+                                                <div className="space-y-4">
+                                                    <div className="group relative p-6 bg-white rounded border border-stone-200 flex items-center justify-between hover:border-gray-300 transition-colors">
+                                                        <div className="flex flex-col">
+                                                            <span className="font-bold text-sm text-gray-700 mb-1 font-mono">全局静音</span>
+                                                            <span className="text-[10px] text-gray-400 font-mono">关闭所有背景音乐与音效</span>
+                                                        </div>
+                                                        <button 
+                                                            onClick={() => setIsMuted(!isMuted)}
+                                                            className={`w-14 h-8 rounded-full relative transition-colors duration-300 focus:outline-none ${isMuted ? 'bg-indigo-500' : 'bg-gray-300'}`}
+                                                        >
+                                                            <div className={`absolute top-1 w-6 h-6 rounded-full bg-white shadow-sm transition-transform duration-300 ${isMuted ? 'left-7' : 'left-1'}`}></div>
+                                                        </button>
+                                                    </div>
+
+                                                    <div className="group relative p-6 bg-white rounded border border-stone-200 hover:border-gray-300 transition-colors">
+                                                        <div className="flex justify-between items-center mb-4">
+                                                            <div className="flex flex-col">
+                                                                <span className="font-bold text-sm text-gray-700 mb-1 font-mono">主音量</span>
+                                                                <span className="text-[10px] text-gray-400 font-mono">调节游戏整体音量大小</span>
+                                                            </div>
+                                                            <span className="font-mono font-bold text-indigo-600">{Math.round(volume * 100)}%</span>
+                                                        </div>
+                                                        <input 
+                                                            type="range" 
+                                                            min="0" 
+                                                            max="1" 
+                                                            step="0.05" 
+                                                            value={volume} 
+                                                            onChange={(e) => {
+                                                                setVolume(parseFloat(e.target.value));
+                                                                if(isMuted && parseFloat(e.target.value) > 0) setIsMuted(false);
+                                                            }}
+                                                            className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                                                        />
+                                                    </div>
                                                 </div>
-                                                <button 
-                                                    onClick={() => setIsMuted(!isMuted)}
-                                                    className={`w-14 h-8 rounded-full relative transition-colors duration-300 focus:outline-none ${isMuted ? 'bg-indigo-500' : 'bg-gray-300'}`}
-                                                >
-                                                    <div className={`absolute top-1 w-6 h-6 rounded-full bg-white shadow-sm transition-transform duration-300 ${isMuted ? 'left-7' : 'left-1'}`}></div>
-                                                </button>
                                             </div>
 
-                                            <div className="group relative p-6 bg-white rounded border border-stone-200 hover:border-gray-300 transition-colors">
-                                                <div className="flex justify-between items-center mb-4">
-                                                    <div className="flex flex-col">
-                                                        <span className="font-bold text-sm text-gray-700 mb-1 font-mono">主音量</span>
-                                                        <span className="text-[10px] text-gray-400 font-mono">调节游戏整体音量大小</span>
-                                                    </div>
-                                                    <span className="font-mono font-bold text-indigo-600">{Math.round(volume * 100)}%</span>
+                                            {/* TTS Controls */}
+                                            <div>
+                                                <div className="text-xs text-indigo-600/70 uppercase tracking-widest mb-3 border-l-2 border-indigo-400 pl-2 flex items-center gap-2">
+                                                    <span>AI 语音合成 (TTS)</span>
+                                                    <span className="text-[9px] bg-indigo-100 text-indigo-600 px-1 rounded">Gemini-2.5</span>
                                                 </div>
-                                                <input 
-                                                    type="range" 
-                                                    min="0" 
-                                                    max="1" 
-                                                    step="0.05" 
-                                                    value={volume} 
-                                                    onChange={(e) => {
-                                                        setVolume(parseFloat(e.target.value));
-                                                        if(isMuted && parseFloat(e.target.value) > 0) setIsMuted(false);
-                                                    }}
-                                                    className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                                                />
+                                                
+                                                <div className="space-y-4">
+                                                    {/* Master TTS Switch */}
+                                                    <div className="group relative p-4 bg-white rounded border border-stone-200 flex items-center justify-between">
+                                                        <div className="flex flex-col">
+                                                            <span className="font-bold text-sm text-gray-800">启用语音朗读</span>
+                                                            <span className="text-[10px] text-gray-400">开启后可手动或自动播放剧情语音</span>
+                                                        </div>
+                                                        <button 
+                                                            onClick={() => handleUpdateTTSConfig({ enabled: !ttsConfig.enabled })}
+                                                            className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${ttsConfig.enabled ? 'bg-indigo-500' : 'bg-gray-300'}`}
+                                                        >
+                                                            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-300 ${ttsConfig.enabled ? 'left-7' : 'left-1'}`}></div>
+                                                        </button>
+                                                    </div>
+
+                                                    {ttsConfig.enabled && (
+                                                        <div className="bg-stone-50 border border-stone-200 rounded p-4 space-y-4 animate-fade-in-up">
+                                                            {/* Auto Play Switch */}
+                                                            <div className="flex items-center justify-between pb-4 border-b border-stone-200">
+                                                                <span className="text-xs font-bold text-gray-700">自动播放 (Auto-Play)</span>
+                                                                <button 
+                                                                    onClick={() => handleUpdateTTSConfig({ autoPlay: !ttsConfig.autoPlay })}
+                                                                    className={`w-10 h-5 rounded-full relative transition-colors duration-300 ${ttsConfig.autoPlay ? 'bg-indigo-500' : 'bg-gray-300'}`}
+                                                                >
+                                                                    <div className={`absolute top-1 w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-300 ${ttsConfig.autoPlay ? 'left-6' : 'left-1'}`}></div>
+                                                                </button>
+                                                            </div>
+
+                                                            {/* Role Switches & Voice Selection */}
+                                                            <div className="space-y-3">
+                                                                {/* Protagonist */}
+                                                                <div className="flex items-center justify-between">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <input 
+                                                                            type="checkbox" 
+                                                                            checked={ttsConfig.enableProtagonist} 
+                                                                            onChange={(e) => handleUpdateTTSConfig({ enableProtagonist: e.target.checked })}
+                                                                            className="accent-indigo-500"
+                                                                        />
+                                                                        <span className="text-xs text-gray-700">主角对话</span>
+                                                                    </div>
+                                                                    <select 
+                                                                        value={ttsConfig.protagonistVoice}
+                                                                        onChange={(e) => handleUpdateTTSConfig({ protagonistVoice: e.target.value as GeminiVoiceName })}
+                                                                        disabled={!ttsConfig.enableProtagonist}
+                                                                        className="text-xs bg-white border border-stone-300 rounded px-2 py-1 outline-none focus:border-indigo-500"
+                                                                    >
+                                                                        {VOICE_OPTIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                                                                    </select>
+                                                                </div>
+
+                                                                {/* NPCs */}
+                                                                <div className="flex items-center justify-between">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <input 
+                                                                            type="checkbox" 
+                                                                            checked={ttsConfig.enableNPC} 
+                                                                            onChange={(e) => handleUpdateTTSConfig({ enableNPC: e.target.checked })}
+                                                                            className="accent-indigo-500"
+                                                                        />
+                                                                        <span className="text-xs text-gray-700">NPC 对话</span>
+                                                                    </div>
+                                                                    <select 
+                                                                        value={ttsConfig.npcVoice}
+                                                                        onChange={(e) => handleUpdateTTSConfig({ npcVoice: e.target.value as GeminiVoiceName })}
+                                                                        disabled={!ttsConfig.enableNPC}
+                                                                        className="text-xs bg-white border border-stone-300 rounded px-2 py-1 outline-none focus:border-indigo-500"
+                                                                    >
+                                                                        {VOICE_OPTIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                                                                    </select>
+                                                                </div>
+
+                                                                {/* Narration */}
+                                                                <div className="flex items-center justify-between">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <input 
+                                                                            type="checkbox" 
+                                                                            checked={ttsConfig.enableNarration} 
+                                                                            onChange={(e) => handleUpdateTTSConfig({ enableNarration: e.target.checked })}
+                                                                            className="accent-indigo-500"
+                                                                        />
+                                                                        <span className="text-xs text-gray-700">旁白 / 描述</span>
+                                                                    </div>
+                                                                    <select 
+                                                                        value={ttsConfig.narratorVoice}
+                                                                        onChange={(e) => handleUpdateTTSConfig({ narratorVoice: e.target.value as GeminiVoiceName })}
+                                                                        disabled={!ttsConfig.enableNarration}
+                                                                        className="text-xs bg-white border border-stone-300 rounded px-2 py-1 outline-none focus:border-indigo-500"
+                                                                    >
+                                                                        {VOICE_OPTIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                                                                    </select>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                 )}
@@ -1082,7 +1236,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
 
                       {/* Footer */}
-                      <div className="p-6 border-t border-stone-200 bg-stone-50 flex justify-end shrink-0 z-30 relative">
+                      <div className="p-6 border-t border-stone-200 bg-stone-50 flex justify-between items-center shrink-0 z-30 relative">
+                          <button 
+                            onClick={handleExportSettings}
+                            className="text-gray-500 hover:text-indigo-600 font-bold font-mono text-xs flex items-center gap-2 transition-colors px-4 py-2 rounded hover:bg-indigo-50 border border-transparent hover:border-indigo-100"
+                            title="导出当前所有系统设置与提示词为 JSON 文件"
+                          >
+                              <span className="text-lg">📥</span> 导出配置
+                          </button>
+
                           <button 
                             onClick={onClose} 
                             className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold font-mono px-8 py-3 clip-path-polygon hover:shadow-lg transition-all active:translate-y-0.5"

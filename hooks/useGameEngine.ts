@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GameState, StoryGenre, GameContext, StorySegment, ImageSize, SavedGame, StoryMood, generateUUID, SaveType, Skill, AvatarStyle, BackgroundStyle, GalleryItem, MOOD_LABELS, InputMode, MemoryState, ImageModel, SupportingCharacter, VisualEffectType, ShotSize, ScheduledEvent, PromptModule } from '../types';
+import { GameState, StoryGenre, GameContext, StorySegment, ImageSize, SavedGame, StoryMood, generateUUID, SaveType, Skill, AvatarStyle, BackgroundStyle, GalleryItem, MOOD_LABELS, InputMode, MemoryState, ImageModel, SupportingCharacter, VisualEffectType, ShotSize, ScheduledEvent, PromptModule, TTSConfig } from '../types';
 import * as GeminiService from '../services/geminiService';
 import { getRandomBackground, getSmartBackground } from '../components/SmoothBackground';
 
@@ -53,6 +53,17 @@ const DEFAULT_MEMORY: MemoryState = {
 };
 
 const DEFAULT_CUSTOM_PROMPT = "请始终保持小说叙述风格，熟练运用“五感写作法”（视觉、听觉、嗅觉、触觉、味觉）和“冰山理论写法”（只描写行动和感官细节，避免直接描写情绪和说教）。采用简洁、自然的口语化表达，使整体叙事更符合现代汉语习惯。多加入人物对话和心理刻画，减少华丽辞藻和纯粹的叙述。避免过于直白的系统提示音，将系统机制自然巧妙地融入世界观中。";
+
+const DEFAULT_TTS_CONFIG: TTSConfig = {
+    enabled: false,
+    autoPlay: false,
+    enableProtagonist: true,
+    enableNPC: true,
+    enableNarration: true,
+    protagonistVoice: 'Puck',
+    npcVoice: 'Kore',
+    narratorVoice: 'Zephyr'
+};
 
 const getInitialContext = (): GameContext => ({
     sessionId: generateUUID(),
@@ -113,6 +124,7 @@ export const useGameEngine = () => {
   const [storyFontSize, setStoryFontSize] = useState<number>(18);
   const [storyFontFamily, setStoryFontFamily] = useState<string>("'Noto Serif SC', serif");
   const [autoSaveGallery, setAutoSaveGallery] = useState(false);
+  const [ttsConfig, setTTSConfig] = useState<TTSConfig>(DEFAULT_TTS_CONFIG);
 
   // Image Generation State
   const [selectedImageStyle, setSelectedImageStyle] = useState<string>('anime');
@@ -154,6 +166,11 @@ export const useGameEngine = () => {
   const latestContextRef = useRef(context);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // TTS State
+  const [isTTSPlaying, setIsTTSPlaying] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   const [battleAnim, setBattleAnim] = useState<string | null>(null);
 
@@ -253,6 +270,14 @@ export const useGameEngine = () => {
     if (savedBgStyle) setBackgroundStyle(savedBgStyle);
     const savedAutoSaveGallery = localStorage.getItem('protagonist_auto_save_gallery');
     if (savedAutoSaveGallery !== null) setAutoSaveGallery(savedAutoSaveGallery === 'true');
+    
+    // Load TTS Config
+    const savedTTS = localStorage.getItem('protagonist_tts_config');
+    if (savedTTS) {
+        try {
+            setTTSConfig({ ...DEFAULT_TTS_CONFIG, ...JSON.parse(savedTTS) });
+        } catch (e) {}
+    }
   }, []);
 
   useEffect(() => {
@@ -265,6 +290,18 @@ export const useGameEngine = () => {
   }, [gameState, backgroundStyle, bgImage]);
 
   useEffect(() => { latestContextRef.current = context; }, [context]);
+
+  // Clean up AudioContext on unmount
+  useEffect(() => {
+      return () => {
+          if (audioSourceRef.current) {
+              try { audioSourceRef.current.stop(); } catch(e) {}
+          }
+          if (audioContextRef.current) {
+              try { audioContextRef.current.close(); } catch(e) {}
+          }
+      };
+  }, []);
 
   // Helper to combine custom prompt with active modules
   const getCombinedCustomPrompt = () => {
@@ -508,6 +545,14 @@ export const useGameEngine = () => {
   const handleSetAutoSaveGallery = (val: boolean) => {
       setAutoSaveGallery(val);
       localStorage.setItem('protagonist_auto_save_gallery', val.toString());
+  };
+
+  const handleUpdateTTSConfig = (config: Partial<TTSConfig>) => {
+      setTTSConfig(prev => {
+          const next = { ...prev, ...config };
+          localStorage.setItem('protagonist_tts_config', JSON.stringify(next));
+          return next;
+      });
   };
 
   const addToGallery = (base64: string, prompt: string, style: string) => { 
@@ -776,6 +821,82 @@ export const useGameEngine = () => {
   const handleSwitchVersion = (segmentId: string, direction: 'prev' | 'next') => { playClickSound(); setContext(prev => { const history = [...prev.history]; const idx = history.findIndex(h => h.id === segmentId); if (idx === -1) return prev; const seg = { ...history[idx] }; if (!seg.versions || seg.versions.length < 2) return prev; let newIdx = (seg.currentVersionIndex || 0) + (direction === 'next' ? 1 : -1); if (newIdx < 0) newIdx = seg.versions.length - 1; if (newIdx >= seg.versions.length) newIdx = 0; if (newIdx === seg.currentVersionIndex) return prev; const v = seg.versions[newIdx]; seg.currentVersionIndex = newIdx; seg.text = v.text; seg.choices = v.choices; seg.visualPrompt = v.visualPrompt; seg.mood = v.mood; seg.location = v.location; history[idx] = seg; const isCurrent = prev.currentSegment?.id === segmentId; return { ...prev, history, currentSegment: isCurrent ? seg : prev.currentSegment, lastUpdated: Date.now() }; }); };
   const handleGenerateImage = async () => { playClickSound(); if (!context.currentSegment?.visualPrompt || !context.currentSegment?.id) return; toggleModal('image', false); const characterInfo = `Character Name: ${context.character.name}, Gender: ${context.character.gender}, Appearance: ${context.character.trait}`; triggerManualImageGeneration(context.currentSegment.visualPrompt, context.currentSegment.id, selectedImageStyle, characterInfo, customImageStyle, context.character.avatar); };
 
+  const playStorySegmentTTS = async (segment: StorySegment) => {
+      if (!segment || !segment.text) return;
+      
+      if (isTTSPlaying) {
+          if (audioSourceRef.current) {
+              try { audioSourceRef.current.stop(); } catch(e) {}
+              audioSourceRef.current = null;
+          }
+          setIsTTSPlaying(false);
+          return;
+      }
+
+      if (!ttsConfig.enabled) {
+          setError("请先在设置中开启 TTS 语音功能");
+          return;
+      }
+
+      setIsTTSPlaying(true);
+      
+      try {
+          // 1. Determine Voice
+          const protagonistName = context.character.name;
+          const activeName = segment.activeCharacterName || protagonistName;
+          
+          let voiceToUse = ttsConfig.narratorVoice;
+          let shouldPlay = ttsConfig.enableNarration;
+
+          if (activeName === protagonistName || activeName === '我') {
+              voiceToUse = ttsConfig.protagonistVoice;
+              shouldPlay = ttsConfig.enableProtagonist;
+          } else {
+              // Check if it's an NPC (simplified check: if name is in supporting characters or activeName is not empty)
+              voiceToUse = ttsConfig.npcVoice;
+              shouldPlay = ttsConfig.enableNPC;
+          }
+
+          if (!shouldPlay) {
+              setIsTTSPlaying(false);
+              return;
+          }
+
+          // 2. Generate Audio
+          const base64 = await GeminiService.generateSpeech(segment.text, voiceToUse);
+
+          // 3. Play Audio
+          if (!audioContextRef.current) {
+              audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+          }
+          const ctx = audioContextRef.current;
+          if (ctx.state === 'suspended') await ctx.resume();
+
+          const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+          const dataInt16 = new Int16Array(bytes.buffer);
+          const buffer = ctx.createBuffer(1, dataInt16.length, 24000);
+          const channelData = buffer.getChannelData(0);
+          for (let i = 0; i < dataInt16.length; i++) {
+              channelData[i] = dataInt16[i] / 32768.0;
+          }
+
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          source.onended = () => {
+              setIsTTSPlaying(false);
+              audioSourceRef.current = null;
+          };
+          source.start();
+          audioSourceRef.current = source;
+
+      } catch (e: any) {
+          console.error("TTS Error:", e);
+          setError("语音生成失败: " + (e.message || "Unknown error"));
+          setIsTTSPlaying(false);
+      }
+  };
+
   return {
     gameState, setGameState, context, setContext, isLoading, loadingProgress, error, setError, modals, toggleModal,
     aiModel, handleSetAiModel, imageModel, handleSetImageModel, avatarStyle, handleSetAvatarStyle, customAvatarStyle, handleSetCustomAvatarStyle,
@@ -792,6 +913,8 @@ export const useGameEngine = () => {
     handleAddScheduledEvent, handleUpdateScheduledEvent, handleDeleteScheduledEvent,
     autoSaveGallery, handleSetAutoSaveGallery, isCurrentBgFavorited, toggleCurrentBgFavorite,
     customBaseUrl, handleSetCustomBaseUrl, customApiKey, handleSetCustomApiKey,
-    promptModules, handleAddPromptModule, handleUpdatePromptModule, handleDeletePromptModule
+    promptModules, handleAddPromptModule, handleUpdatePromptModule, handleDeletePromptModule,
+    ttsConfig, handleUpdateTTSConfig,
+    playStorySegmentTTS, isTTSPlaying
   };
 };
