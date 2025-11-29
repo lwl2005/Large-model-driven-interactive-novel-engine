@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GameState, StoryGenre, GameContext, StorySegment, ImageSize, SavedGame, StoryMood, generateUUID, SaveType, Skill, AvatarStyle, BackgroundStyle, GalleryItem, MOOD_LABELS, InputMode, MemoryState, ImageModel, SupportingCharacter, VisualEffectType, ShotSize, ScheduledEvent } from '../types';
+import { GameState, StoryGenre, GameContext, StorySegment, ImageSize, SavedGame, StoryMood, generateUUID, SaveType, Skill, AvatarStyle, BackgroundStyle, GalleryItem, MOOD_LABELS, InputMode, MemoryState, ImageModel, SupportingCharacter, VisualEffectType, ShotSize, ScheduledEvent, PromptModule } from '../types';
 import * as GeminiService from '../services/geminiService';
 import { getRandomBackground, getSmartBackground } from '../components/SmoothBackground';
 
@@ -97,6 +97,9 @@ export const useGameEngine = () => {
   // Settings State
   const [aiModel, setAiModel] = useState<string>('gemini-2.5-pro');
   const [imageModel, setImageModel] = useState<ImageModel>('gemini-2.5-flash-image-preview');
+  const [customBaseUrl, setCustomBaseUrl] = useState<string>('');
+  const [customApiKey, setCustomApiKey] = useState<string>('');
+  
   const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>('anime');
   const [customAvatarStyle, setCustomAvatarStyle] = useState<string>('');
   const [backgroundStyle, setBackgroundStyle] = useState<BackgroundStyle>('anime');
@@ -104,6 +107,7 @@ export const useGameEngine = () => {
   const [modelScopeApiKey, setModelScopeApiKey] = useState<string>('');
   const [avatarRefImage, setAvatarRefImage] = useState<string>('');
   const [customPrompt, setCustomPrompt] = useState<string>(DEFAULT_CUSTOM_PROMPT);
+  const [promptModules, setPromptModules] = useState<PromptModule[]>([]); // New: Extra Prompt Modules
   const [showStoryPanelBackground, setShowStoryPanelBackground] = useState(true);
   const [historyFontSize, setHistoryFontSize] = useState<number>(15);
   const [storyFontSize, setStoryFontSize] = useState<number>(18);
@@ -212,6 +216,13 @@ export const useGameEngine = () => {
     if (savedModel) setAiModel(savedModel);
     const savedImageModel = localStorage.getItem('protagonist_image_model') as ImageModel;
     if (savedImageModel) setImageModel(savedImageModel);
+    
+    // New: Load Custom Config
+    const savedBaseUrl = localStorage.getItem('protagonist_custom_base_url');
+    if (savedBaseUrl) setCustomBaseUrl(savedBaseUrl);
+    const savedCustomKey = localStorage.getItem('protagonist_custom_api_key');
+    if (savedCustomKey) setCustomApiKey(savedCustomKey);
+
     const savedAvatarStyle = localStorage.getItem('protagonist_avatar_style') as AvatarStyle;
     if (savedAvatarStyle) setAvatarStyle(savedAvatarStyle);
     const savedCustomAvatarStyle = localStorage.getItem('protagonist_custom_avatar_style');
@@ -224,6 +235,10 @@ export const useGameEngine = () => {
     if (savedModelScopeKey) setModelScopeApiKey(savedModelScopeKey);
     const savedCustomPrompt = localStorage.getItem('protagonist_custom_prompt');
     if (savedCustomPrompt) setCustomPrompt(savedCustomPrompt);
+    // Load Extra Prompt Modules
+    const savedPromptModules = localStorage.getItem('protagonist_prompt_modules');
+    if (savedPromptModules) try { setPromptModules(JSON.parse(savedPromptModules)); } catch(e) {}
+
     const savedShowStoryPanelBackground = localStorage.getItem('protagonist_show_panel_bg');
     if (savedShowStoryPanelBackground !== null) setShowStoryPanelBackground(savedShowStoryPanelBackground === 'true');
     const savedHistoryFS = localStorage.getItem('protagonist_history_font_size');
@@ -250,6 +265,12 @@ export const useGameEngine = () => {
   }, [gameState, backgroundStyle, bgImage]);
 
   useEffect(() => { latestContextRef.current = context; }, [context]);
+
+  // Helper to combine custom prompt with active modules
+  const getCombinedCustomPrompt = () => {
+      const activeExtras = promptModules.filter(m => m.isActive).map(m => `[附加规则: ${m.title}]\n${m.content}`).join('\n\n');
+      return `${customPrompt}\n\n${activeExtras}`;
+  };
 
   // Save Logic
   const saveGameToStorage = useCallback((currentContext: GameContext, type: SaveType) => {
@@ -443,6 +464,10 @@ export const useGameEngine = () => {
 
   const handleSetAiModel = (m: string) => { setAiModel(m); localStorage.setItem('protagonist_ai_model', m); };
   const handleSetImageModel = (m: ImageModel) => { setImageModel(m); localStorage.setItem('protagonist_image_model', m); };
+  
+  const handleSetCustomBaseUrl = (url: string) => { setCustomBaseUrl(url); localStorage.setItem('protagonist_custom_base_url', url); };
+  const handleSetCustomApiKey = (key: string) => { setCustomApiKey(key); localStorage.setItem('protagonist_custom_api_key', key); };
+
   const handleSetAvatarStyle = (s: AvatarStyle) => { setAvatarStyle(s); localStorage.setItem('protagonist_avatar_style', s); };
   const handleSetCustomAvatarStyle = (s: string) => { setCustomAvatarStyle(s); localStorage.setItem('protagonist_custom_avatar_style', s); };
   const handleSetAvatarRefImage = (b: string) => { setAvatarRefImage(b); if (!b) localStorage.removeItem('protagonist_avatar_ref'); else try { localStorage.setItem('protagonist_avatar_ref', b); } catch (e) {} };
@@ -450,6 +475,30 @@ export const useGameEngine = () => {
   const handleSetModelScopeApiKey = (k: string) => { setModelScopeApiKey(k); localStorage.setItem('protagonist_modelscope_key', k); };
   const handleTestModelScope = async (key: string) => GeminiService.validateModelScopeConnection(key);
   const handleSetCustomPrompt = (p: string) => { setCustomPrompt(p); localStorage.setItem('protagonist_custom_prompt', p); };
+  
+  // Prompt Module Handlers
+  const handleAddPromptModule = (module: PromptModule) => {
+      setPromptModules(prev => {
+          const next = [...prev, module];
+          localStorage.setItem('protagonist_prompt_modules', JSON.stringify(next));
+          return next;
+      });
+  };
+  const handleUpdatePromptModule = (module: PromptModule) => {
+      setPromptModules(prev => {
+          const next = prev.map(p => p.id === module.id ? module : p);
+          localStorage.setItem('protagonist_prompt_modules', JSON.stringify(next));
+          return next;
+      });
+  };
+  const handleDeletePromptModule = (id: string) => {
+      setPromptModules(prev => {
+          const next = prev.filter(p => p.id !== id);
+          localStorage.setItem('protagonist_prompt_modules', JSON.stringify(next));
+          return next;
+      });
+  };
+
   const handleSetBackgroundStyle = (s: BackgroundStyle) => { setBackgroundStyle(s); localStorage.setItem('protagonist_bg_style', s); if (gameState === GameState.LANDING || gameState === GameState.SETUP) setBgImage(getSmartBackground(StoryGenre.CUSTOM, StoryMood.PEACEFUL, s)); setSelectedImageStyle(s === 'realistic' ? 'realistic' : 'anime'); };
   const handleSetShowStoryPanelBackground = (s: boolean) => { setShowStoryPanelBackground(s); localStorage.setItem('protagonist_show_panel_bg', s.toString()); };
   const handleSetHistoryFontSize = (s: number) => { setHistoryFontSize(s); localStorage.setItem('protagonist_history_font_size', s.toString()); };
@@ -612,7 +661,9 @@ export const useGameEngine = () => {
     progressTimerRef.current = setInterval(() => { setLoadingProgress(prev => { if (prev >= 95) return prev; return Math.min(prev + (prev < 50 ? Math.random() * 5 + 2 : Math.random() + 0.5), 95); }); }, 200);
 
     try {
-      const opening = await GeminiService.generateOpening(context.genre, context.character, context.supportingCharacters, context.worldSettings, aiModel, context.customGenre, context.storyName, customPrompt, context.narrativeMode, context.narrativeTechnique);
+      // Use combined prompt
+      const finalPrompt = getCombinedCustomPrompt();
+      const opening = await GeminiService.generateOpening(context.genre, context.character, context.supportingCharacters, context.worldSettings, aiModel, context.customGenre, context.storyName, finalPrompt, context.narrativeMode, context.narrativeTechnique);
       if (abortControllerRef.current?.signal.aborted) throw new Error("Aborted");
       setLoadingProgress(prev => Math.max(prev, 40));
       const avatarPromise = GeminiService.generateCharacterAvatar(context.genre, context.character, avatarStyle, imageModel, customAvatarStyle, modelScopeApiKey, avatarRefImage);
@@ -661,6 +712,7 @@ export const useGameEngine = () => {
     try {
       const historyToUse = (fromIndex !== undefined && fromIndex < context.history.length - 1) ? context.history.slice(0, fromIndex + 1) : context.history;
       
+      const finalPrompt = getCombinedCustomPrompt();
       const nextSegment = await GeminiService.advanceStory(
           historyToUse, 
           actualChoice, 
@@ -671,7 +723,7 @@ export const useGameEngine = () => {
           context.memories, 
           aiModel, 
           context.customGenre, 
-          customPrompt, 
+          finalPrompt, 
           context.scheduledEvents || [],
           context.narrativeMode,
           context.narrativeTechnique
@@ -720,7 +772,7 @@ export const useGameEngine = () => {
   const handleGlobalReplace = (findText: string, replaceText: string): number => { if (!findText || !replaceText) return 0; const escapeRegExp = (string: string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); const regex = new RegExp(escapeRegExp(findText), 'g'); let count = 0; const countIn = (s: string | undefined) => s ? (s.match(regex) || []).length : 0; Object.values(context.memories).forEach(val => { if (typeof val === 'string') count += countIn(val); }); const limit = 5; const startIndex = Math.max(0, context.history.length - limit); for (let i = startIndex; i < context.history.length; i++) { const seg = context.history[i]; count += countIn(seg.text); seg.choices.forEach(c => count += countIn(c)); } if (context.currentSegment && !context.history.find(h => h.id === context.currentSegment?.id)) { count += countIn(context.currentSegment.text); } if (count === 0) return 0; setContext(prev => { const newMemories = { ...prev.memories }; (Object.keys(newMemories) as (keyof MemoryState)[]).forEach(k => { if (typeof newMemories[k] === 'string') newMemories[k] = newMemories[k].replace(regex, replaceText); }); const newHistory = [...prev.history]; const start = Math.max(0, newHistory.length - limit); for (let i = start; i < newHistory.length; i++) { let updatedText = newHistory[i].text.replace(regex, replaceText); let updatedChoices = newHistory[i].choices.map(c => c.replace(regex, replaceText)); newHistory[i] = { ...newHistory[i], text: updatedText, choices: updatedChoices }; } let newCurrent = prev.currentSegment ? { ...prev.currentSegment } : null; if (newCurrent) { newCurrent.text = newCurrent.text.replace(regex, replaceText); newCurrent.choices = newCurrent.choices.map(c => c.replace(regex, replaceText)); } return { ...prev, memories: newMemories, history: newHistory, currentSegment: newCurrent, lastUpdated: Date.now() }; }); return count; };
   const handleUpgradeSkill = (skillId: string) => { setContext(prev => ({ ...prev, character: { ...prev.character, skills: prev.character.skills.map(s => s.id === skillId ? { ...s, level: (s.level || 1) + 1 } : s ) } })); playProgressSound(); };
   const handleAbortGame = () => { if (abortControllerRef.current) abortControllerRef.current.abort(); if (progressTimerRef.current) clearInterval(progressTimerRef.current); setGameState(GameState.SETUP); setError("已终止世界生成。"); playClickSound(); };
-  const handleRegenerate = async () => { playClickSound(); const lastIdx = context.history.length - 1; if (lastIdx < 0) return; const lastSegment = context.history[lastIdx]; if (lastIdx > 0 && !lastSegment.causedBy) { setError("无法重新生成此节点"); return; } setIsLoading(true); setError(null); try { let newSegment: StorySegment; const historyContext = context.history.slice(0, lastIdx); if (lastIdx === 0) { newSegment = await GeminiService.generateOpening(context.genre, context.character, context.supportingCharacters, context.worldSettings, aiModel, context.customGenre, context.storyName, customPrompt, context.narrativeMode, context.narrativeTechnique); } else { const causedBy = lastSegment.causedBy || ""; newSegment = await GeminiService.advanceStory(historyContext, causedBy, context.genre, context.character, context.supportingCharacters, context.worldSettings, context.memories, aiModel, context.customGenre, customPrompt, context.scheduledEvents || [], context.narrativeMode, context.narrativeTechnique); newSegment.causedBy = causedBy; } setContext(prev => { const history = [...prev.history]; const currentSeg = { ...history[lastIdx] }; if (!currentSeg.versions) { currentSeg.versions = [{ text: currentSeg.text, choices: currentSeg.choices, visualPrompt: currentSeg.visualPrompt, mood: currentSeg.mood }]; currentSeg.currentVersionIndex = 0; } const newVersion = { text: newSegment.text, choices: newSegment.choices, visualPrompt: newSegment.visualPrompt, mood: newSegment.mood, location: newSegment.location }; currentSeg.versions.push(newVersion); const newIdx = currentSeg.versions.length - 1; currentSeg.currentVersionIndex = newIdx; currentSeg.text = newVersion.text; currentSeg.choices = newVersion.choices; currentSeg.visualPrompt = newVersion.visualPrompt; currentSeg.mood = newVersion.mood; currentSeg.location = newVersion.location; history[lastIdx] = currentSeg; return { ...prev, history, currentSegment: currentSeg, memories: newSegment.newMemories || prev.memories, lastUpdated: Date.now() }; }); playProgressSound(); } catch (e) { console.error("Regenerate failed", e); setError("重新生成失败"); } finally { setIsLoading(false); } };
+  const handleRegenerate = async () => { playClickSound(); const lastIdx = context.history.length - 1; if (lastIdx < 0) return; const lastSegment = context.history[lastIdx]; if (lastIdx > 0 && !lastSegment.causedBy) { setError("无法重新生成此节点"); return; } setIsLoading(true); setError(null); try { let newSegment: StorySegment; const historyContext = context.history.slice(0, lastIdx); const finalPrompt = getCombinedCustomPrompt(); if (lastIdx === 0) { newSegment = await GeminiService.generateOpening(context.genre, context.character, context.supportingCharacters, context.worldSettings, aiModel, context.customGenre, context.storyName, finalPrompt, context.narrativeMode, context.narrativeTechnique); } else { const causedBy = lastSegment.causedBy || ""; newSegment = await GeminiService.advanceStory(historyContext, causedBy, context.genre, context.character, context.supportingCharacters, context.worldSettings, context.memories, aiModel, context.customGenre, finalPrompt, context.scheduledEvents || [], context.narrativeMode, context.narrativeTechnique); newSegment.causedBy = causedBy; } setContext(prev => { const history = [...prev.history]; const currentSeg = { ...history[lastIdx] }; if (!currentSeg.versions) { currentSeg.versions = [{ text: currentSeg.text, choices: currentSeg.choices, visualPrompt: currentSeg.visualPrompt, mood: currentSeg.mood }]; currentSeg.currentVersionIndex = 0; } const newVersion = { text: newSegment.text, choices: newSegment.choices, visualPrompt: newSegment.visualPrompt, mood: newSegment.mood, location: newSegment.location }; currentSeg.versions.push(newVersion); const newIdx = currentSeg.versions.length - 1; currentSeg.currentVersionIndex = newIdx; currentSeg.text = newVersion.text; currentSeg.choices = newVersion.choices; currentSeg.visualPrompt = newVersion.visualPrompt; currentSeg.mood = newVersion.mood; currentSeg.location = newVersion.location; history[lastIdx] = currentSeg; return { ...prev, history, currentSegment: currentSeg, memories: newSegment.newMemories || prev.memories, lastUpdated: Date.now() }; }); playProgressSound(); } catch (e) { console.error("Regenerate failed", e); setError("重新生成失败"); } finally { setIsLoading(false); } };
   const handleSwitchVersion = (segmentId: string, direction: 'prev' | 'next') => { playClickSound(); setContext(prev => { const history = [...prev.history]; const idx = history.findIndex(h => h.id === segmentId); if (idx === -1) return prev; const seg = { ...history[idx] }; if (!seg.versions || seg.versions.length < 2) return prev; let newIdx = (seg.currentVersionIndex || 0) + (direction === 'next' ? 1 : -1); if (newIdx < 0) newIdx = seg.versions.length - 1; if (newIdx >= seg.versions.length) newIdx = 0; if (newIdx === seg.currentVersionIndex) return prev; const v = seg.versions[newIdx]; seg.currentVersionIndex = newIdx; seg.text = v.text; seg.choices = v.choices; seg.visualPrompt = v.visualPrompt; seg.mood = v.mood; seg.location = v.location; history[idx] = seg; const isCurrent = prev.currentSegment?.id === segmentId; return { ...prev, history, currentSegment: isCurrent ? seg : prev.currentSegment, lastUpdated: Date.now() }; }); };
   const handleGenerateImage = async () => { playClickSound(); if (!context.currentSegment?.visualPrompt || !context.currentSegment?.id) return; toggleModal('image', false); const characterInfo = `Character Name: ${context.character.name}, Gender: ${context.character.gender}, Appearance: ${context.character.trait}`; triggerManualImageGeneration(context.currentSegment.visualPrompt, context.currentSegment.id, selectedImageStyle, characterInfo, customImageStyle, context.character.avatar); };
 
@@ -738,6 +790,8 @@ export const useGameEngine = () => {
     handleRegenerate, handleSwitchVersion, handleGlobalReplace, handleAbortGame, handleUpgradeSkill,
     historyFontSize, handleSetHistoryFontSize, storyFontSize, handleSetStoryFontSize, storyFontFamily, handleSetStoryFontFamily,
     handleAddScheduledEvent, handleUpdateScheduledEvent, handleDeleteScheduledEvent,
-    autoSaveGallery, handleSetAutoSaveGallery, isCurrentBgFavorited, toggleCurrentBgFavorite
+    autoSaveGallery, handleSetAutoSaveGallery, isCurrentBgFavorited, toggleCurrentBgFavorite,
+    customBaseUrl, handleSetCustomBaseUrl, customApiKey, handleSetCustomApiKey,
+    promptModules, handleAddPromptModule, handleUpdatePromptModule, handleDeletePromptModule
   };
 };

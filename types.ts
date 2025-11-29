@@ -1,5 +1,4 @@
 
-
 export enum GameState {
   LANDING = 'LANDING',
   SETUP = 'SETUP',
@@ -208,6 +207,13 @@ export interface GalleryItem {
 
 export interface APIKeyError {
   message: string;
+}
+
+export interface PromptModule {
+  id: string;
+  isActive: boolean;
+  title: string;
+  content: string;
 }
 
 // Helper for safe UUID generation in all environments

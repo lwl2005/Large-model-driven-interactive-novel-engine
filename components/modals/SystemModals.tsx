@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
-import { GalleryItem, ImageModel, AvatarStyle, BackgroundStyle, InputMode } from '../../types';
+import { GalleryItem, ImageModel, AvatarStyle, BackgroundStyle, InputMode, PromptModule, generateUUID } from '../../types';
 
 interface GalleryModalProps {
     gallery: GalleryItem[];
@@ -96,6 +97,12 @@ interface SettingsModalProps {
     customPrompt: string;
     setCustomPrompt: (s: string) => void;
     
+    // Extra Prompt Modules
+    promptModules: PromptModule[];
+    handleAddPromptModule: (module: PromptModule) => void;
+    handleUpdatePromptModule: (module: PromptModule) => void;
+    handleDeletePromptModule: (id: string) => void;
+    
     // Display Props
     showStoryPanelBackground: boolean;
     setShowStoryPanelBackground: (show: boolean) => void;
@@ -109,6 +116,12 @@ interface SettingsModalProps {
     // Auto Save Gallery
     autoSaveGallery: boolean;
     setAutoSaveGallery: (val: boolean) => void;
+
+    // Custom Connection
+    customBaseUrl: string;
+    handleSetCustomBaseUrl: (url: string) => void;
+    customApiKey: string;
+    handleSetCustomApiKey: (key: string) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ 
@@ -125,17 +138,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     isMuted, setIsMuted,
     volume, setVolume,
     customPrompt, setCustomPrompt,
+    promptModules, handleAddPromptModule, handleUpdatePromptModule, handleDeletePromptModule,
     showStoryPanelBackground, setShowStoryPanelBackground,
     historyFontSize, setHistoryFontSize,
     storyFontSize, setStoryFontSize,
     storyFontFamily, setStoryFontFamily,
-    autoSaveGallery, setAutoSaveGallery
+    autoSaveGallery, setAutoSaveGallery,
+    customBaseUrl, handleSetCustomBaseUrl,
+    customApiKey, handleSetCustomApiKey
 }) => {
-    const [activeTab, setActiveTab] = useState<'model' | 'prompt' | 'avatar' | 'display' | 'gameplay' | 'audio'>('model');
+    const [activeTab, setActiveTab] = useState<'model' | 'prompt' | 'avatar' | 'display' | 'gameplay' | 'audio' | 'connection'>('model');
     
     // Local state for connection testing
     const [isTesting, setIsTesting] = useState(false);
     const [testResult, setTestResult] = useState<{success: boolean, message: string} | null>(null);
+
+    // Auto Assign Logic State
+    const [modelListText, setModelListText] = useState('');
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [analysisLog, setAnalysisLog] = useState<string[]>([]);
+    const [analysisResult, setAnalysisResult] = useState<{text?: string, image?: string} | null>(null);
+    const [showKeyInput, setShowKeyInput] = useState(false);
 
     const TabButton = ({ id, label }: { id: string, label: string }) => (
         <button 
@@ -177,16 +200,208 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }
     };
 
-    // Auto-sync background style when avatar style changes
     const handleAvatarStyleChange = (style: AvatarStyle) => {
         setAvatarStyle(style);
-        
-        // Logic: if realistic avatar -> realistic background. otherwise anime.
         if (style === 'realistic') {
             setBackgroundStyle('realistic');
         } else if (style === 'anime' || style === 'ink' || style === '3d') {
             setBackgroundStyle('anime');
         }
+    };
+
+    const handleAutoAssign = async () => {
+        setIsAnalyzing(true);
+        setAnalysisLog([]);
+        setAnalysisResult(null);
+
+        const addLog = (msg: string) => {
+            setAnalysisLog(prev => [...prev, msg]);
+        };
+
+        addLog("Initializing Neural Scanner...");
+        await new Promise(r => setTimeout(r, 200));
+
+        let models: string[] = [];
+        
+        // 1. Fetch Remote Models
+        try {
+            addLog("Checking API Endpoint Configuration...");
+            const apiKey = customApiKey || process.env.API_KEY;
+            
+            if (!apiKey) {
+                throw new Error("No API Key found. Please configure Custom Key or env.");
+            }
+
+            let url = "";
+            let headers: Record<string, string> = {};
+
+            // Heuristic to determine if we are using standard Google API or a Custom Proxy
+            // Standard OpenAI/Proxy: Authorization: Bearer <key>
+            // Standard Google: ?key=<key>
+            
+            if (customBaseUrl && customBaseUrl.trim().length > 0) {
+                addLog(`Using Custom Base URL: ${customBaseUrl}`);
+                // Remove trailing slash
+                let cleanBase = customBaseUrl.replace(/\/$/, "");
+                
+                // User might input '.../v1' or just '.../v1/models' or just root.
+                // Standard convention for OpenAI proxies is to expose /models
+                // If it ends in /models, use as is. If not, append /models.
+                if (cleanBase.endsWith("/models")) {
+                    url = cleanBase;
+                } else {
+                    url = `${cleanBase}/models`;
+                }
+                
+                headers = { 
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                };
+            } else {
+                addLog("Using Default Google Gemini Endpoint...");
+                url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+                // Google doesn't strictly need headers if key is in query param
+            }
+
+            addLog(`Fetching model list from: ${url}`);
+            
+            const response = await fetch(url, { method: 'GET', headers });
+            
+            if (!response.ok) {
+                let errText = await response.text();
+                // Try to clean up error text
+                try {
+                    const errJson = JSON.parse(errText);
+                    errText = JSON.stringify(errJson.error || errJson, null, 0);
+                } catch(e) {}
+                
+                throw new Error(`HTTP ${response.status}: ${errText.substring(0, 100)}`);
+            }
+
+            const data = await response.json();
+            addLog("Data received. Parsing structure...");
+            
+            // 2. Parse Response (Support multiple formats)
+            if (data.models && Array.isArray(data.models)) {
+                // Google Format: { models: [{ name: "models/gemini-pro" }] }
+                models = data.models.map((m: any) => m.name.replace(/^models\//, ''));
+                addLog(`Detected Google Protocol. Found ${models.length} models.`);
+            } else if (data.data && Array.isArray(data.data)) {
+                // OpenAI Format: { data: [{ id: "gpt-4" }] }
+                models = data.data.map((m: any) => m.id);
+                addLog(`Detected OpenAI/Proxy Protocol. Found ${models.length} models.`);
+            } else {
+                // Fallback: Try to find any array in the object
+                const possibleList = Object.values(data).find(v => Array.isArray(v)) as any[];
+                if (possibleList) {
+                    models = possibleList.map((m: any) => m.id || m.name || (typeof m === 'string' ? m : JSON.stringify(m)));
+                    addLog(`Extracted ${models.length} items from unknown response structure.`);
+                } else {
+                    addLog("Warning: Could not identify model list format.");
+                    addLog(`Response keys: ${Object.keys(data).join(', ')}`);
+                    throw new Error("Could not parse models from response.");
+                }
+            }
+
+            // Update the cache/textarea so the user sees what was found
+            setModelListText(models.join('\n'));
+
+        } catch (e: any) {
+            addLog(`Network Fetch Failed: ${e.message}`);
+            if (e.message.includes('Failed to fetch')) {
+                addLog("Hint: Check CORS settings if accessing direct URL from browser.");
+            }
+            addLog("Falling back to manual text input analysis...");
+            // Fallback to what's in the textarea if network fails
+            if (modelListText.trim()) {
+                models = modelListText.split(/[\n,;]/).map(s => s.trim()).filter(s => s.length > 0);
+            }
+        }
+
+        if (models.length === 0) {
+            addLog("No models found to analyze.");
+            setIsAnalyzing(false);
+            return;
+        }
+
+        addLog(`Analyzing ${models.length} candidate models...`);
+        await new Promise(r => setTimeout(r, 300));
+
+        let bestText = "";
+        let bestImage = "";
+        let textScore = -1;
+        let imageScore = -1;
+
+        for (const model of models) {
+            const m = model.toLowerCase();
+            let currentTextScore = 0;
+            let currentImageScore = 0;
+
+            // Image scoring
+            if (m.includes('image') || m.includes('diffusion') || m.includes('dall') || m.includes('journey') || m.includes('flux')) {
+                currentImageScore += 10;
+            } else if (m.includes('vision')) {
+                // Vision is often multimodal text, not image gen, but better than pure text for image understanding
+                currentImageScore += 2; 
+            } else {
+                currentImageScore = 0; // Not an image model
+            }
+
+            // Text scoring
+            if (m.includes('pro') || m.includes('ultra') || m.includes('gpt-4') || m.includes('opus') || m.includes('sonnet') || m.includes('gemini-1.5')) {
+                currentTextScore += 10;
+            } else if (m.includes('flash') || m.includes('turbo') || m.includes('haiku') || m.includes('gemini')) {
+                currentTextScore += 8; // Good for speed
+            } else if (m.includes('gpt-3.5') || m.includes('mini')) {
+                currentTextScore += 5;
+            } else if (m.includes('embedding') || m.includes('bison')) {
+                currentTextScore = 0; // Skip embeddings
+            }
+
+            // Avoid assigning image models to text slot
+            if (currentImageScore > 5) currentTextScore = -1;
+
+            if (currentImageScore > imageScore) {
+                imageScore = currentImageScore;
+                bestImage = model;
+                if (currentImageScore > 0) addLog(`[VISUAL] Candidate: ${model}`);
+            }
+            if (currentTextScore > textScore) {
+                textScore = currentTextScore;
+                bestText = model;
+                if (currentTextScore > 8) addLog(`[TEXT] Strong Candidate: ${model}`);
+            }
+        }
+
+        addLog("Analysis Complete.");
+        
+        if (bestText) {
+            addLog(`>> Assigning TEXT Engine: ${bestText}`);
+            setAiModel(bestText);
+        } else {
+            addLog(">> No suitable Text Engine found. Keeping current.");
+        }
+
+        if (bestImage && imageScore > 0) {
+            addLog(`>> Assigning IMAGE Engine: ${bestImage}`);
+            // @ts-ignore
+            setImageModel(bestImage);
+        } else {
+            addLog(">> No dedicated Image Engine found.");
+        }
+
+        setAnalysisResult({ text: bestText, image: bestImage });
+        setIsAnalyzing(false);
+    };
+
+    const handleCreatePromptModule = () => {
+        const newModule: PromptModule = {
+            id: generateUUID(),
+            title: "新规则",
+            isActive: true,
+            content: ""
+        };
+        handleAddPromptModule(newModule);
     };
 
     const fontOptions = [
@@ -216,6 +431,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       
                       <div className="flex-1 py-4 space-y-1 overflow-y-auto">
                           <TabButton id="model" label="AI 模型配置" />
+                          <TabButton id="connection" label="开发者 / 连接" />
                           <TabButton id="prompt" label="提示词设置" />
                           <TabButton id="avatar" label="角色绘图设置" />
                           <TabButton id="display" label="显示设置" />
@@ -240,6 +456,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <div className="flex justify-between items-center p-6 border-b border-stone-200 bg-stone-100 shrink-0 z-10">
                           <h4 className="text-lg font-bold text-gray-700 tracking-wider">
                               {activeTab === 'model' && '> AI 核心模型配置'}
+                              {activeTab === 'connection' && '> 开发者 / 自定义连接'}
                               {activeTab === 'prompt' && '> 自定义写作规则'}
                               {activeTab === 'avatar' && '> 人物形象生成参数'}
                               {activeTab === 'display' && '> 视觉显示配置'}
@@ -278,6 +495,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                                     </button>
                                                 ))}
                                             </div>
+                                            
+                                            {/* Show custom model if selected */}
+                                            {![ 'gemini-2.5-pro', 'gemini-3-pro-preview', 'gemini-2.5-flash' ].includes(aiModel) && (
+                                                <div className="mt-2 p-3 bg-amber-50 border border-amber-300 rounded text-amber-800 text-xs flex items-center gap-2">
+                                                    <span className="font-bold">⚠️ 当前使用自定义模型:</span> 
+                                                    <span className="font-mono">{aiModel}</span>
+                                                </div>
+                                            )}
                                         </div>
 
                                         {/* Image Models - Gemini */}
@@ -299,6 +524,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                                     </button>
                                                 ))}
                                             </div>
+                                            
+                                            {/* Show custom model if selected */}
+                                            {![ 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-image', 'Qwen/Qwen-Image', 'MusePublic/FLUX.1' ].includes(imageModel) && (
+                                                <div className="mt-2 p-3 bg-amber-50 border border-amber-300 rounded text-amber-800 text-xs flex items-center gap-2">
+                                                    <span className="font-bold">⚠️ 当前使用自定义模型:</span> 
+                                                    <span className="font-mono">{imageModel}</span>
+                                                </div>
+                                            )}
                                         </div>
 
                                         {/* Image Models - ModelScope */}
@@ -369,11 +602,126 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     </div>
                                 )}
 
+                                {activeTab === 'connection' && (
+                                    <div className="space-y-6">
+                                        {/* Custom Endpoint Config */}
+                                        <div className="bg-stone-50 p-4 border border-stone-300 rounded-xl relative overflow-hidden">
+                                            <div className="absolute top-0 left-0 w-full h-1 bg-teal-500"></div>
+                                            <div className="text-xs text-teal-700 font-bold uppercase tracking-widest mb-4 flex items-center gap-2">
+                                                <span className="text-lg">🔌</span> 自定义接口连接
+                                            </div>
+                                            
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <label className="text-[10px] text-gray-500 uppercase font-bold mb-1 block">API Endpoint (Base URL)</label>
+                                                    <input 
+                                                        type="text" 
+                                                        value={customBaseUrl}
+                                                        onChange={(e) => handleSetCustomBaseUrl(e.target.value)}
+                                                        placeholder="例如: https://my-custom-proxy.com/v1"
+                                                        className="w-full bg-white border border-stone-300 rounded px-3 py-2 text-sm text-gray-800 font-mono focus:border-teal-500 outline-none transition-colors"
+                                                    />
+                                                    <p className="text-[9px] text-gray-400 mt-1">留空则使用官方默认地址。请确保代理接口兼容 Gemini/OpenAI 格式。</p>
+                                                </div>
+
+                                                <div>
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <label className="text-[10px] text-gray-500 uppercase font-bold block">Custom API Key</label>
+                                                        <button 
+                                                            onClick={() => setShowKeyInput(!showKeyInput)}
+                                                            className="text-[9px] text-teal-600 hover:text-teal-800 underline"
+                                                        >
+                                                            {showKeyInput ? "使用默认环境变量" : "覆盖默认 Key"}
+                                                        </button>
+                                                    </div>
+                                                    {showKeyInput ? (
+                                                        <input 
+                                                            type="password" 
+                                                            value={customApiKey}
+                                                            onChange={(e) => handleSetCustomApiKey(e.target.value)}
+                                                            placeholder="sk-..."
+                                                            className="w-full bg-white border border-stone-300 rounded px-3 py-2 text-sm text-gray-800 font-mono focus:border-teal-500 outline-none transition-colors"
+                                                        />
+                                                    ) : (
+                                                        <div className="w-full bg-gray-100 border border-gray-200 rounded px-3 py-2 text-sm text-gray-400 font-mono italic cursor-not-allowed">
+                                                            Using process.env.API_KEY (Secure)
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Model Scanner & Auto-Allocator */}
+                                        <div className="bg-black rounded-xl p-4 border border-stone-600 shadow-2xl relative overflow-hidden">
+                                            {/* Screen Glare Effect */}
+                                            <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none"></div>
+                                            
+                                            <div className="flex justify-between items-center mb-4 border-b border-stone-800 pb-2">
+                                                <div className="text-xs text-green-500 font-mono font-bold uppercase tracking-widest flex items-center gap-2">
+                                                    <span className="animate-pulse">●</span> 远程模型扫描与自动适配
+                                                </div>
+                                                <span className="text-[9px] text-stone-500 font-mono">SYS.ALLOCATOR.V2</span>
+                                            </div>
+
+                                            <div className="flex flex-col gap-4">
+                                                <button 
+                                                    onClick={handleAutoAssign}
+                                                    disabled={isAnalyzing}
+                                                    className={`w-full py-2 bg-stone-800 hover:bg-stone-700 border border-stone-600 text-green-400 font-mono text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${isAnalyzing ? 'animate-pulse' : ''}`}
+                                                >
+                                                    {isAnalyzing ? (
+                                                        <><span>Scanning Remote...</span><span className="animate-spin">⟳</span></>
+                                                    ) : (
+                                                        <><span>Connect & Fetch Models</span><span>⚡</span></>
+                                                    )}
+                                                </button>
+
+                                                {/* Terminal Log */}
+                                                <div className="bg-black/50 rounded border border-stone-800 p-3 h-32 overflow-y-auto custom-scrollbar font-mono text-[10px] space-y-1">
+                                                    {analysisLog.length === 0 && <span className="text-stone-600 italic">>> System Ready. Click 'Connect' to scan available models.</span>}
+                                                    {analysisLog.map((log, i) => (
+                                                        <div key={i} className="text-green-500/80 border-l-2 border-green-900 pl-2 animate-fade-in-left">
+                                                            <span className="opacity-50 mr-2">[{new Date().toLocaleTimeString().split(' ')[0]}]</span>
+                                                            {log}
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {/* Result Display */}
+                                                {analysisResult && (
+                                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                                        <div className="bg-stone-900 border border-green-500/30 p-2 rounded text-center">
+                                                            <div className="text-[9px] text-stone-500 uppercase mb-1">Assigned Text Engine</div>
+                                                            <div className="text-xs text-green-400 font-bold truncate" title={analysisResult.text}>{analysisResult.text || "No Change"}</div>
+                                                        </div>
+                                                        <div className="bg-stone-900 border border-green-500/30 p-2 rounded text-center">
+                                                            <div className="text-[9px] text-stone-500 uppercase mb-1">Assigned Visual Engine</div>
+                                                            <div className="text-xs text-green-400 font-bold truncate" title={analysisResult.image}>{analysisResult.image || "No Change"}</div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Hidden or Readonly Model List */}
+                                                {modelListText && (
+                                                    <div className="relative mt-2">
+                                                        <div className="text-[9px] text-stone-500 mb-1">Found Models Cache:</div>
+                                                        <textarea 
+                                                            readOnly
+                                                            value={modelListText}
+                                                            className="w-full h-16 bg-stone-900/50 border border-stone-800 rounded p-2 text-[10px] text-stone-400 font-mono focus:outline-none resize-none custom-scrollbar"
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {activeTab === 'prompt' && (
                                     <div className="space-y-6">
                                         <div>
                                             <div className="text-xs text-indigo-600/70 uppercase tracking-widest mb-3 border-l-2 border-indigo-400 pl-2">
-                                                自定义写作规则
+                                                主提示词 (Main Prompt)
                                             </div>
                                             <p className="text-[10px] text-gray-500 mb-3 leading-relaxed">
                                                 在此输入的指令将被附加到所有剧情生成的 Prompt 中。你可以用来规定写作风格、禁止特定词汇、强制特定叙事视角或调整对话比例。
@@ -382,7 +730,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                                 value={customPrompt}
                                                 onChange={(e) => setCustomPrompt(e.target.value)}
                                                 placeholder="例如：请使用更华丽辞藻的古风文笔；或：禁止出现任何现代词汇；或：侧重心理描写..."
-                                                className="w-full h-64 bg-white border border-stone-300 rounded-lg p-4 text-sm text-gray-800 font-mono focus:border-indigo-500 outline-none transition-all placeholder-gray-400 resize-y custom-scrollbar leading-relaxed shadow-inner"
+                                                className="w-full h-32 bg-white border border-stone-300 rounded-lg p-4 text-sm text-gray-800 font-mono focus:border-indigo-500 outline-none transition-all placeholder-gray-400 resize-y custom-scrollbar leading-relaxed shadow-inner"
                                             />
                                             <div className="flex justify-between mt-2">
                                                 <span className="text-[9px] text-gray-400">已输入 {customPrompt.length} 字符</span>
@@ -392,6 +740,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                                 >
                                                     清空内容
                                                 </button>
+                                            </div>
+                                        </div>
+
+                                        <div className="border-t border-stone-200 pt-6">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <div className="text-xs text-purple-600/70 uppercase tracking-widest border-l-2 border-purple-400 pl-2">
+                                                    扩展提示词模块 (Extra Prompt Modules)
+                                                </div>
+                                                <button 
+                                                    onClick={() => handleAddPromptModule({ id: generateUUID(), isActive: true, title: "新规则", content: "" })}
+                                                    className="text-[10px] bg-purple-100 hover:bg-purple-200 text-purple-700 px-2 py-1 rounded border border-purple-200 font-bold transition-colors"
+                                                >
+                                                    + 添加新模块
+                                                </button>
+                                            </div>
+                                            
+                                            <div className="space-y-3">
+                                                {promptModules.map(module => (
+                                                    <div key={module.id} className={`border rounded-lg p-3 transition-all ${module.isActive ? 'bg-white border-purple-200 shadow-sm' : 'bg-stone-50 border-stone-200 opacity-70'}`}>
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <div className="flex items-center gap-2 flex-1">
+                                                                <input 
+                                                                    type="checkbox" 
+                                                                    checked={module.isActive}
+                                                                    onChange={(e) => handleUpdatePromptModule({ ...module, isActive: e.target.checked })}
+                                                                    className="w-4 h-4 accent-purple-600 cursor-pointer"
+                                                                />
+                                                                <input 
+                                                                    type="text" 
+                                                                    value={module.title}
+                                                                    onChange={(e) => handleUpdatePromptModule({ ...module, title: e.target.value })}
+                                                                    className="text-xs font-bold bg-transparent border-b border-transparent focus:border-purple-300 outline-none w-32 focus:w-48 transition-all"
+                                                                    placeholder="模块标题"
+                                                                />
+                                                            </div>
+                                                            <button 
+                                                                onClick={() => handleDeletePromptModule(module.id)}
+                                                                className="text-gray-400 hover:text-red-500 px-2"
+                                                                title="删除"
+                                                            >
+                                                                ✕
+                                                            </button>
+                                                        </div>
+                                                        <textarea 
+                                                            value={module.content}
+                                                            onChange={(e) => handleUpdatePromptModule({ ...module, content: e.target.value })}
+                                                            placeholder="在此输入额外的提示词规则，例如特定的剧情走向要求、风格限制或开车指令..."
+                                                            className="w-full h-20 bg-stone-50 border border-stone-200 rounded p-2 text-xs text-gray-700 font-mono focus:border-purple-300 focus:bg-white outline-none transition-all resize-y"
+                                                        />
+                                                    </div>
+                                                ))}
+                                                {promptModules.length === 0 && (
+                                                    <div className="text-center py-6 border-2 border-dashed border-stone-200 rounded-lg text-gray-400 text-xs">
+                                                        暂无额外模块，点击上方按钮添加。<br/>
+                                                        (可用于添加如"开车"、"战斗特化"等开关式 Prompt)
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     </div>

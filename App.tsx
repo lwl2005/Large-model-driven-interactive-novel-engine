@@ -1,3 +1,4 @@
+
 import React, { useEffect } from 'react';
 import { GameState } from './types';
 import { useGameEngine } from './hooks/useGameEngine';
@@ -195,6 +196,11 @@ const App: React.FC = () => {
                 
                 customPrompt={game.customPrompt}
                 setCustomPrompt={game.handleSetCustomPrompt}
+                promptModules={game.promptModules}
+                handleAddPromptModule={game.handleAddPromptModule}
+                handleUpdatePromptModule={game.handleUpdatePromptModule}
+                handleDeletePromptModule={game.handleDeletePromptModule}
+
                 showStoryPanelBackground={game.showStoryPanelBackground}
                 setShowStoryPanelBackground={game.handleSetShowStoryPanelBackground}
                 
@@ -207,6 +213,11 @@ const App: React.FC = () => {
                 
                 autoSaveGallery={game.autoSaveGallery}
                 setAutoSaveGallery={game.handleSetAutoSaveGallery}
+
+                customBaseUrl={game.customBaseUrl}
+                handleSetCustomBaseUrl={game.handleSetCustomBaseUrl}
+                customApiKey={game.customApiKey}
+                handleSetCustomApiKey={game.handleSetCustomApiKey}
             />
         )}
 
